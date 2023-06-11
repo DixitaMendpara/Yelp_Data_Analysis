@@ -1,0 +1,222 @@
+---
+title: "Yelp Data Visualization"
+author: "Dixita Dineshbhai Mendpara"
+date: '2023-05-07'
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(gganimate)
+library(stringr)
+library(tidyr)
+library(lubridate)
+library(leaflet)
+library(wordcloud)
+library(tidytext)
+
+```
+
+
+```{r}
+fillcolor = "#D83434"
+```
+
+
+```{r results='hide'}
+file_name <- 'yelp_academic_dataset_review.json'
+review<-jsonlite::stream_in(textConnection(readLines(file_name, n=280984)), flatten = TRUE)
+```
+```{r}
+summary(review)
+```
+```{r}
+ggplot(review, aes(x = stars)) +
+  geom_histogram(aes(color = stars, fill = fillcolor),binwidth = 1) +
+  xlab("Rating") +
+  ylab("Count") +
+  ggtitle("Count of Yelp Review Ratings") +
+  theme_classic() +
+  transition_states(stars, transition_length = 3, state_length = 1) +
+  shadow_mark(alpha = .3)
+```
+
+```{r}
+anim_save("ratinghistogram.gif")
+```
+
+```{r results='hide'}
+file_name <- 'yelp_academic_dataset_business.json'
+business<-jsonlite::stream_in(textConnection(readLines(file_name, n=280984)), flatten = TRUE)
+```
+```{r}
+summary(business)
+```
+```{r}
+business<-business[1:12]
+business
+```
+```{r , error=FALSE, warning=FALSE, message=FALSE}
+business_wide<-business%>%
+       mutate(categories = strsplit(categories, ", ")) %>%
+     unnest(categories) %>% 
+     arrange(categories) %>%  
+     pivot_wider(names_from = categories,
+            names_prefix = "categories_",
+            names_repair = "universal", 
+            values_from = categories, 
+            values_fill = 0, 
+            values_fn = length)
+```
+
+
+```{r}
+categories = str_split(business$categories,";")
+categories = as.data.frame(unlist(categories))
+colnames(categories) = c("Name")
+
+categories %>%
+  group_by(Name) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(Name = reorder(Name,Count)) %>%
+  head(10) %>%
+  
+  
+  ggplot(aes(x = Name,y = Count)) +
+  geom_bar(stat='identity',colour="white", fill =fillcolor) +
+  labs(x = 'Name of Category', y = 'Count', 
+       title = 'Top 10 Categories of Business') +
+  coord_flip() + 
+  theme_classic()
+```
+```{r}
+restaurants <- business[grepl('Restaurant',business$categories),]
+dim(restaurants)
+```
+
+```{r}
+#categories in restuarant
+business %>%
+ select(categories) %>%
+ filter(str_detect(categories, "Restaurant"))
+```
+```{r}
+business %>%
+  type_convert(cols(stars = col_double()))%>%
+  select(state,stars) %>%
+  group_by(state)%>%
+  summarize(Stars=median(stars))%>%
+  arrange(desc(Stars))%>%
+  head(10)
+```
+
+
+```{r}
+#Finding out which business has most reviews in dataset
+maxreviews<-review %>%
+  group_by(business_id) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  head(5) %>%
+  inner_join(business)
+maxreviews
+```
+
+
+
+```{r}
+##Show the establishments with the most number of 5 star reviews (top 5)
+review %>%
+  filter(stars == 5) %>%
+  group_by(business_id) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  head(5)%>%
+inner_join(business_wide)
+```
+
+```{r}
+lukebusiness=business %>%
+  filter(name=="Luke")
+lukeJoined_tbl <-tibble( inner_join(lukebusiness,review))
+```
+
+```{r}
+lukeDateFormatted<-lukeJoined_tbl%>%
+ mutate(date_formatted = as_date(date),
+ month_formatted=month(date),
+ day_formatted=day(date),
+ year_formatted=year(date),
+ hour_formatted=hour(date))
+```
+
+
+
+```{r}
+lukeDateFormatted%>%
+  select(year_formatted)%>%
+  group_by (year_formatted)%>%
+  summarise(NumberofReviews = n())%>%
+  ggplot(aes (x=year_formatted,y=NumberofReviews,color=fillcolor)) +
+  xlab("Year") +
+  ylab("Review Count") +
+  ggtitle("Yearly review count for Luke") +
+  geom_line() + 
+  scale_x_continuous(breaks = seq(2008, 2018, 1),
+                     labels = seq(2008, 2018, 1)) +
+  theme_classic() +
+  transition_reveal(year_formatted)
+```
+```{r}
+anim_save("lukenoreviewsyear.gif")
+```
+
+
+```{r}
+createWordCloud = function(x)
+{
+  lukeDateFormatted %>%
+    unnest_tokens(word, text) %>%
+    filter(!word %in% stop_words$word, !word %in% "luke" & !word %in% "restaurant" & !word %in% "menu") %>%
+    count(word,sort = TRUE) %>%
+    ungroup() %>%
+    head(30) %>%
+    with(wordcloud(word, n, max.words = 30,colors=brewer.pal(8, "Dark2")))
+}
+
+createWordCloud(review)
+```
+```{r}
+positiveWordsBarGraph <- function(SC) {
+  contributions <- SC %>%
+    unnest_tokens(word, text) %>%
+    count(word,sort = TRUE) %>%
+    ungroup() %>%
+    
+    inner_join(get_sentiments("afinn"), by = "word") %>%
+    group_by(word) %>%
+    summarize(contribution = sum(value), n=n())
+  
+  contributions %>%
+    top_n(20, abs(contribution)) %>%
+    mutate(word = reorder(word, contribution)) %>%
+    head(20) %>%
+    ggplot(aes(word, contribution, fill = contribution > 0)) +
+    geom_col(show.legend = FALSE) +
+    coord_flip() + theme_bw()
+}
+```
+
+
+
+```{r}
+positiveWordsBarGraph(lukeJoined_tbl)
+```
+
+
